@@ -5,6 +5,14 @@ from decouple import config
 SOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SOURCE_DIR)
 
+INPUT_DIR = os.path.join(PROJECT_ROOT, 'inputs')
+INPUT_BGS_DIR = os.path.join(INPUT_DIR, 'BGs')
+INPUT_OIS_DIR = os.path.join(INPUT_DIR, 'OIs', 'origin')
+
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, 'outputs')
+OUTPUT_IMAGES_DIR_NAME = 'train'
+OUTPUT_ANNOTATION_NAME = 'train.json'
+
 REDIS_ADDRESS = config('REDIS_ADDRESS', default='localhost')
 REDIS_PORT = config('REDIS_PORT', default='6379')
 
