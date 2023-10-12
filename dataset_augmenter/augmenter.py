@@ -4,7 +4,7 @@ from itertools import combinations
 import numpy as np
 import cv2
 
-from .composition_utils import composite, composite_from_bbox, noisy
+from .composition_utils import composite, composite_from_bbox, sp_noise, noisy
 
 from .conf import (
     OUTPUT_DIR,
@@ -65,14 +65,15 @@ class Augmenter(object):
         self.oi_comb_list_len = len(self.oi_comb_list)
 
     def _setup_bg_variations(self):
-        self.bg_variations_size = max(3, math.ceil(self.class_size / self.bg_samples_len))
-        self.bg_random_noise_size = self.bg_variations_size - 2
-
+        self.bg_variations_size = max(4, math.ceil(self.class_size / self.bg_samples_len))
+        non_rand_bg_transf_size = 3
+        self.bg_random_noise_size = self.bg_variations_size - non_rand_bg_transf_size
 
     def save_example(self, base_img_uri, image_ndarray, annotation, ref=None):
         img_key = self.fs_client.upload_inmemory_to_storage(base_img_uri, image_ndarray, ref=ref)
-        # annotation = self.create_example_annotation(img_key)
-        self.annotator.add_annotation(img_key, annotation)
+        if annotation is not None:
+            # annotation = self.create_example_annotation(img_key)
+            self.annotator.add_annotation(img_key, annotation)
         # annotation['img_key'] = img_key
         # self.annotations['data'].append(annotation)
         return img_key
@@ -102,25 +103,30 @@ class Augmenter(object):
         # https://medium.com/mlearning-ai/how-to-denoise-an-image-using-median-blur-in-python-using-opencv-easy-project-50c2de13ac33
         origin_annotation = self.annotator.create_base_example_annotation(class_id=self.NON_OI_ID)
 
-        # p = 0.2
-        # noisy = np.zeros(bg_image.shape, np.uint8)
-        # #traversing throughout the image pixels
-        # for i in range(bg_image.shape[0]): #rows
-        #     for j in range(bg_image.shape[1]): #cols
-        #         r = random.random()
-        #         if r < p / 2:
-        #             noisy[i][j] = [0, 0, 0] #black noise
-        #         elif r < p:
-        #             noisy[i][j] = [255, 255, 255] #white noise
-        #         else:
-        #             noisy[i][j] = bg_image[i][j] #original image pixel
-        transform_img = noisy('gauss', bg_image)
+        # transform_img = noisy('gauss', bg_image)
+        transform_img = sp_noise(bg_image, 0.02)
         return self.save_example(base_img_uri, transform_img, origin_annotation, ref=f'rn_{rn_delta}')
+
+    def bg_sample_transform_blob_region_random_noise(self, base_img_uri, bg_image):
+        origin_annotation = self.annotator.create_base_example_annotation(class_id=self.NON_OI_ID)
+
+        perc_size = 0.2
+        max_shape = min(bg_image.shape[:2])
+        reg_height = int((max_shape * perc_size) * (random.randint(50, 150) / 100))
+        reg_width = int((max_shape * perc_size) * (random.randint(50, 150) / 100))
+        position = (int(bg_image.shape[1] * random.random()), int(bg_image.shape[0] * random.random()))
+
+        noisy_blob = np.zeros((reg_height, reg_width, 4), np.uint8)
+        noisy_blob = sp_noise(noisy_blob, 0.2)
+        noisy_blob = cv2.blur(noisy_blob, (400, 400))
+        transform_img = composite(src=noisy_blob, dst=bg_image.copy(), position=position)
+        return self.save_example(base_img_uri, transform_img, origin_annotation, ref=f'bl')
 
     def bg_sample_augmentations(self, img_uri, bg_image):
         augmented_examples = []
         augmented_examples.append(self.bg_sample_origin(img_uri, bg_image))
         augmented_examples.append(self.bg_sample_transform_denoise(img_uri, bg_image))
+        augmented_examples.append(self.bg_sample_transform_blob_region_random_noise(img_uri, bg_image))
         for rn_i in range(self.bg_random_noise_size):
             augmented_examples.append(self.bg_sample_transform_random_noise(img_uri, bg_image, rn_i))
 
@@ -134,7 +140,7 @@ class Augmenter(object):
             examples.extend(augmented_examples)
 
             # remove this (add to reduce exampels and test)
-            break
+            # break
         return examples
 
     def crop_oi_fig(self, image_ndarray):
@@ -229,11 +235,11 @@ class Augmenter(object):
             # print(f'preparing for {base_img_uri} c_{comb_i}_{delta_i}')
             fg_image, objects = self.prepare_fg_oi_img_combination(oi_images, fg_size)
             annotation = self.annotator.create_base_example_annotation(class_id=self.HAS_OI_ID, objects=objects)
-            self.save_example(base_img_uri, fg_image, annotation, ref=f'c_{comb_i}_{delta_i}_fg')
+            self.save_example(base_img_uri, fg_image, None, ref=f'c_{comb_i}_{delta_i}_fg')
             final_image = composite(src=fg_image, dst=bg_image.copy())
             augmented_examples.append(self.save_example(base_img_uri, final_image, annotation, ref=f'c_{comb_i}_{delta_i}'))
             # todo: remove the break
-            break
+            # break
 
         return augmented_examples
 
@@ -248,7 +254,7 @@ class Augmenter(object):
             # ]
 
             #use this instead!:
-            self.bg_samples_len = 3 # remove this line!
+            # self.bg_samples_len = 3 # remove this line!
             selected_bg_keys = self.annotator.get_bg_sample_keys(self.bg_samples_len)
 
             # selected_bg_keys = random.sample(self.annotations['non_oi_keys'], self.bg_samples_len)
@@ -258,7 +264,7 @@ class Augmenter(object):
                 examples.extend(augmented_examples)
 
             # remove this (add to reduce exampels and test)
-            break
+            # break
 
 
 
@@ -281,6 +287,7 @@ class Augmenter(object):
         self._prepare_disk()
         self.annotator.non_oi_keys = self.prepare_non_oi_examples()
         self.annotator.has_oi_keys = self.prepare_has_oi_examples()
+        print(f'proportion: {len(self.annotator.has_oi_keys)} / {len(self.annotator.non_oi_keys)} (has_oi/non_oi)')
         self.save_annotations()
 
 def main():
