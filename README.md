@@ -116,3 +116,5 @@ And, in order to make the automatic tests work, you should also set the rest of 
 
 ## Benchmark Tests
 To run the benchmark tests one needs to manually start the Benchmark stage in the CI pipeline, it shoud be enabled after the tests stage is done. Only by passing the benchmark tests shoud the image be tagged with 'latest', to show that it is a stable docker image.
+
+outputs/TS-D-Q-1b-10S/train/frame_160_o_o_c_0_1.png

@@ -8,10 +8,13 @@ PROJECT_ROOT = os.path.dirname(SOURCE_DIR)
 INPUT_DIR = os.path.join(PROJECT_ROOT, 'inputs')
 INPUT_BGS_DIR = os.path.join(INPUT_DIR, 'BGs')
 INPUT_OIS_DIR = os.path.join(INPUT_DIR, 'OIs', 'origin')
+INPUT_OI_SAMPLES_DIR = os.path.join(INPUT_DIR, 'OIs', 'Samples')
+
 
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, 'outputs')
 OUTPUT_IMAGES_DIR_NAME = 'train'
 OUTPUT_ANNOTATION_NAME = 'train.json'
+BACKUP_PROGRESS_JSON = os.path.join(OUTPUT_DIR, 'bk_progress.json')
 
 REDIS_ADDRESS = config('REDIS_ADDRESS', default='localhost')
 REDIS_PORT = config('REDIS_PORT', default='6379')

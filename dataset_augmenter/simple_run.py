@@ -11,6 +11,7 @@ from dataset_augmenter.annotators import ClassifierAnnotator
 from dataset_augmenter.conf import (
     INPUT_BGS_DIR,
     INPUT_OIS_DIR,
+    INPUT_OI_SAMPLES_DIR,
     OUTPUT_DIR,
     OUTPUT_IMAGES_DIR_NAME,
     OUTPUT_ANNOTATION_NAME,
@@ -41,10 +42,22 @@ def get_oi_figs_uris_dict(oi_classes):
         oi_figs[oi] = glob.glob(regexp)
     return oi_figs
 
+def get_oi_annotated_samples_dict(annotator, dataset_id, oi_classes):
+    dataset_input_samples_dir = os.path.join(INPUT_OI_SAMPLES_DIR, dataset_id, '_'.join(oi_classes))
+    regexp = os.path.join(dataset_input_samples_dir, '*.png')
+
+    images_uris = list(glob.glob(regexp))
+    img_uri_to_annotation = {
+        k: None
+        for k in images_uris
+    }
+
+    return img_uri_to_annotation
+
 
 def run_augmenter():
 
-    dataset_id = 'TS-D-Q-1-5S'
+    dataset_id = 'TS-D-Q-1-10S'
     oi_classes = ['car']
     oi_delta = 7
 
@@ -54,6 +67,8 @@ def run_augmenter():
     all_classes = ['bg'] + oi_classes
     oi_fgs = get_oi_figs_uris_dict(oi_classes)
     oi_shape = (512, 512)
+
+    oi_annotated_samples = get_oi_annotated_samples_dict(None, dataset_id, oi_classes)
 
     fs_client = DiskImageLoader(
         output_dir=OUTPUT_DIR,
@@ -73,7 +88,8 @@ def run_augmenter():
         bg_shape=bg_shape,
         oi_fgs=oi_fgs,
         oi_shape=oi_shape,
-        oi_delta=oi_delta
+        oi_delta=oi_delta,
+        oi_annotated_samples=oi_annotated_samples,
     )
     augmenter.augment()
 

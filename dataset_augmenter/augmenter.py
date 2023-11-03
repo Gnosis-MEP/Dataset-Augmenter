@@ -14,7 +14,7 @@ from .conf import (
 
 class Augmenter(object):
 
-    def __init__(self, annotator, fs_client, dataset_id, bg_samples, bg_shape, oi_fgs, oi_shape,  oi_delta=7):
+    def __init__(self, annotator, fs_client, dataset_id, bg_samples, bg_shape, oi_fgs, oi_shape,  oi_delta=7, oi_annotated_samples=None, debug=False):
         """
         fs_client: a file storage client, need to have methods:
             get_image_ndarray_by_key_and_shape(self, img_key, nd_shape),
@@ -25,8 +25,11 @@ class Augmenter(object):
         oi_fgs: dict: str(OI label)->img_uri list
         oi_shape: shape of the object of interest, eg: (512, 512)
         oi_delta: int, number of FG variations for each OI class combination
+        oi_annotated_samples: dict: str(img_uri)-> annotation dict{}, default to None
+                    use this to use the original frames that are known to contain the OIs
         """
 
+        self.debug = debug
         self.NON_OI_ID = 0
         self.HAS_OI_ID = 1
         self.NON_OI_LABEL = "non_oi"
@@ -43,6 +46,11 @@ class Augmenter(object):
         self.oi_comb_list = []
         self.oi_comb_list_len = 0
 
+        if oi_annotated_samples is not None:
+            self.oi_annotated_samples = oi_annotated_samples
+        else:
+            self.oi_annotated_samples = []
+
         self._setup_oi_combinations()
         self.class_size = self._calculate_class_size()
         self.bg_variations_size = 0
@@ -56,7 +64,9 @@ class Augmenter(object):
         # }
 
     def _calculate_class_size(self):
-        return self.bg_samples_len * self.oi_comb_list_len * self.oi_delta
+        class_size  = self.bg_samples_len * self.oi_comb_list_len * self.oi_delta
+        class_size += len(self.oi_annotated_samples)
+        return class_size
 
     def _setup_oi_combinations(self):
         self.oi_comb_list = []
@@ -78,34 +88,43 @@ class Augmenter(object):
         # self.annotations['data'].append(annotation)
         return img_key
 
-    def create_base_example_annotation(self, class_label, objects):
-        """
-        class_label: non_oi, has_oi
-        objects: dict-> key: object class label, value: list of bboxes
-        """
-        return {
-            'class_label': class_label,
-        }
-
     def bg_sample_origin(self, base_img_uri, bg_image):
         origin_annotation = self.annotator.create_base_example_annotation(class_id=self.NON_OI_ID)
         return self.save_example(base_img_uri, bg_image, origin_annotation, ref='o')
+
+    def sample_transform_denoise(self, bg_image):
+        # https://machinelearningprojects.net/blurrings-in-cv2/
+
+        # transform_img = cv2.fastNlMeansDenoisingColored(bg_image, None, 10, 10, 7, 21)
+        transform_img = cv2.medianBlur(bg_image, ksize=5)
+        ref='dn'
+        return transform_img, ref
 
     def bg_sample_transform_denoise(self, base_img_uri, bg_image):
         # https://machinelearningprojects.net/blurrings-in-cv2/
         origin_annotation = self.annotator.create_base_example_annotation(class_id=self.NON_OI_ID)
 
         # transform_img = cv2.fastNlMeansDenoisingColored(bg_image, None, 10, 10, 7, 21)
-        transform_img = cv2.medianBlur(bg_image, ksize=5)
-        return self.save_example(base_img_uri, transform_img, origin_annotation, ref='dn')
+        transform_img, ref = self.sample_transform_denoise(bg_image)
+
+        return self.save_example(base_img_uri, transform_img, origin_annotation, ref=ref)
+
+    def sample_transform_random_noise(self, bg_image, rn_delta=None):
+        # transform_img = noisy('gauss', bg_image)
+        transform_img = sp_noise(bg_image, 0.02)
+        ref = 'rn'
+        if rn_delta is not None:
+            ref += f'_{rn_delta}'
+        return transform_img, ref
 
     def bg_sample_transform_random_noise(self, base_img_uri, bg_image, rn_delta):
         # https://medium.com/mlearning-ai/how-to-denoise-an-image-using-median-blur-in-python-using-opencv-easy-project-50c2de13ac33
         origin_annotation = self.annotator.create_base_example_annotation(class_id=self.NON_OI_ID)
 
         # transform_img = noisy('gauss', bg_image)
-        transform_img = sp_noise(bg_image, 0.02)
-        return self.save_example(base_img_uri, transform_img, origin_annotation, ref=f'rn_{rn_delta}')
+        # transform_img = sp_noise(bg_image, 0.02)
+        transform_img, ref = self.sample_transform_random_noise(bg_image, rn_delta=rn_delta)
+        return self.save_example(base_img_uri, transform_img, origin_annotation, ref=ref)
 
     def bg_sample_transform_blob_region_random_noise(self, base_img_uri, bg_image):
         origin_annotation = self.annotator.create_base_example_annotation(class_id=self.NON_OI_ID)
@@ -138,7 +157,6 @@ class Augmenter(object):
             image_ndarray = self.fs_client.get_image_ndarray_by_key_and_shape(bg_img_uri, self.bg_shape)
             augmented_examples = self.bg_sample_augmentations(bg_img_uri, image_ndarray)
             examples.extend(augmented_examples)
-
             # remove this (add to reduce exampels and test)
             # break
         return examples
@@ -158,19 +176,31 @@ class Augmenter(object):
         cropImg = image_ndarray[miny:maxy, minx:maxx]
         return cropImg
 
-    def select_fg_imgs_for_oi_comb(self, oi_comb):
+    def load_fg_imgs_for_oi_comb(self, oi_comb):
         selected_oi_fg_imgs = {}
         for oi in oi_comb:
-            n_samples = random.randint(1, len(self.oi_fgs[oi]))
-            oi_sample = random.sample(self.oi_fgs[oi], n_samples)
-
             samples_dict = {}
-            for oi_img_uri in oi_sample:
+            for oi_img_uri in self.oi_fgs[oi]:
                 samples_dict[oi_img_uri] = self.crop_oi_fig(
                     self.fs_client.get_image_ndarray_by_key_and_shape(oi_img_uri, self.oi_shape, alpha=True)
                 )
             selected_oi_fg_imgs[oi] = samples_dict
         return selected_oi_fg_imgs
+
+
+    # def select_fg_imgs_for_oi_comb(self, oi_comb):
+    #     selected_oi_fg_imgs = {}
+    #     for oi in oi_comb:
+    #         n_samples = random.randint(1, len(self.oi_fgs[oi]))
+    #         oi_sample = random.sample(self.oi_fgs[oi], n_samples)
+
+    #         samples_dict = {}
+    #         for oi_img_uri in oi_sample:
+    #             samples_dict[oi_img_uri] = self.crop_oi_fig(
+    #                 self.fs_client.get_image_ndarray_by_key_and_shape(oi_img_uri, self.oi_shape, alpha=True)
+    #             )
+    #         selected_oi_fg_imgs[oi] = samples_dict
+    #     return selected_oi_fg_imgs
 
     def randomize_oi_fg_transform(self, fg_size, oi_image):
         rand_resize = random.randint(50, 150) / 100
@@ -212,10 +242,22 @@ class Augmenter(object):
         fg_height, fg_width = fg_size
         # blank fg image
         fg_image = np.zeros((fg_height, fg_width, 4), np.uint8)
+
+        # import ipdb; ipdb.set_trace()
+#         n_samples = random.randint(1, len(self.oi_fgs[oi]))
+#         oi_sample = random.sample(self.oi_fgs[oi], n_samples)
         for oi, oi_data in oi_images.items():
             # print(f"fg images: {oi_data.keys()}")
+
+            max_samples = min(5, len(oi_data.keys()))
+            n_samples = random.randint(1, max_samples)
+            oi_sample = random.sample(oi_data.keys(), n_samples)
+
             bbox_list = []
-            for oi_image in oi_data.values():
+
+            # for oi_image in oi_data.values():
+            for oi_img_url in oi_sample:
+                oi_image = oi_data[oi_img_url]
                 t_oi_image, bbox = self.randomize_oi_fg_transform(fg_size, oi_image)
                 # print(f'> {bbox}')
                 fg_image = composite_from_bbox(src=t_oi_image, dst=fg_image, bbox=bbox)
@@ -231,13 +273,22 @@ class Augmenter(object):
         augmented_examples = []
         fg_size = bg_image.shape[:2]
 
+        transformations = [
+            lambda o: (o, 'o'),
+            self.sample_transform_denoise,
+            self.sample_transform_random_noise
+        ]
+
         for delta_i in range(self.oi_delta):
             # print(f'preparing for {base_img_uri} c_{comb_i}_{delta_i}')
             fg_image, objects = self.prepare_fg_oi_img_combination(oi_images, fg_size)
             annotation = self.annotator.create_base_example_annotation(class_id=self.HAS_OI_ID, objects=objects)
-            self.save_example(base_img_uri, fg_image, None, ref=f'c_{comb_i}_{delta_i}_fg')
-            final_image = composite(src=fg_image, dst=bg_image.copy())
-            augmented_examples.append(self.save_example(base_img_uri, final_image, annotation, ref=f'c_{comb_i}_{delta_i}'))
+            transf = random.choice(transformations)
+            if self.debug:
+                self.save_example(base_img_uri, fg_image, None, ref=f'c_{comb_i}_{delta_i}_fg')
+            composit_image = composite(src=fg_image, dst=bg_image.copy())
+            final_image, ref = transf(composit_image)
+            augmented_examples.append(self.save_example(base_img_uri, final_image, annotation, ref=f'{ref}_c_{comb_i}_{delta_i}'))
             # todo: remove the break
             # break
 
@@ -247,7 +298,7 @@ class Augmenter(object):
         examples = []
 
         for comb_i, oi_comb in enumerate(self.oi_comb_list):
-            oi_images = self.select_fg_imgs_for_oi_comb(oi_comb)
+            oi_images = self.load_fg_imgs_for_oi_comb(oi_comb)
             # oi_images = [
             #     self.fs_client.get_image_ndarray_by_key_and_shape(oi_img_uri, self.oi_shape)
             #     for oi_img_uri in selected_oi_fg_keys
@@ -255,7 +306,7 @@ class Augmenter(object):
 
             #use this instead!:
             # self.bg_samples_len = 3 # remove this line!
-            selected_bg_keys = self.annotator.get_bg_sample_keys(self.bg_samples_len)
+            selected_bg_keys = self.annotator.get_bg_sample_keys(self.bg_samples_len, original_only=True)
 
             # selected_bg_keys = random.sample(self.annotations['non_oi_keys'], self.bg_samples_len)
             for bg_key in selected_bg_keys:
@@ -274,6 +325,18 @@ class Augmenter(object):
         #     examples.extend(augmented_examples)
         return examples
 
+    def save_oi_annotated_sample(self, base_img_uri, bg_image):
+        origin_annotation = self.annotator.create_base_example_annotation(class_id=self.HAS_OI_ID)
+        return self.save_example(base_img_uri, bg_image, origin_annotation, ref='a')
+
+    def prepare_oi_annotated_sample(self):
+        examples = []
+
+        for img_uri, annotation in self.oi_annotated_samples.items():
+            image = self.fs_client.get_image_ndarray_by_key_and_shape(img_uri, self.bg_shape)
+            examples.append(self.save_oi_annotated_sample(img_uri, image))
+        return examples
+
     def _prepare_disk(self):
         "only for inital results, probably, maybe will need this on minio for the fs"
         # create directory in "./data/dataset_id"
@@ -285,8 +348,10 @@ class Augmenter(object):
 
     def augment(self):
         self._prepare_disk()
-        self.annotator.non_oi_keys = self.prepare_non_oi_examples()
-        self.annotator.has_oi_keys = self.prepare_has_oi_examples()
+        self.annotator.set_non_oi_keys(self.prepare_non_oi_examples())
+        self.annotator.set_has_oi_keys(self.prepare_has_oi_examples())
+        if len(self.oi_annotated_samples) != 0:
+            self.annotator.set_has_oi_keys(self.prepare_oi_annotated_sample())
         print(f'proportion: {len(self.annotator.has_oi_keys)} / {len(self.annotator.non_oi_keys)} (has_oi/non_oi)')
         self.save_annotations()
 
