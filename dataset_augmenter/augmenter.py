@@ -14,7 +14,7 @@ from .conf import (
 
 class Augmenter(object):
 
-    def __init__(self, annotator, fs_client, dataset_id, bg_samples, bg_shape, oi_fgs, oi_shape,  oi_delta=7, oi_annotated_samples=None, debug=False):
+    def __init__(self, annotator, fs_client, dataset_id, bg_samples, bg_shape, oi_fgs, oi_shape,  oi_delta=7, oi_annotated_samples=None, oi_region_maps=None, debug=False):
         """
         fs_client: a file storage client, need to have methods:
             get_image_ndarray_by_key_and_shape(self, img_key, nd_shape),
@@ -51,6 +51,11 @@ class Augmenter(object):
         else:
             self.oi_annotated_samples = []
 
+        if oi_region_maps is not None:
+            self._setup_oi_region_maps(oi_region_maps)
+        else:
+            self.oi_region_maps = {}
+
         self._setup_oi_combinations()
         self.class_size = self._calculate_class_size()
         self.bg_variations_size = 0
@@ -70,9 +75,18 @@ class Augmenter(object):
 
     def _setup_oi_combinations(self):
         self.oi_comb_list = []
-        for i in range(1, self.oi_len + 1):
-            self.oi_comb_list.extend(combinations(self.oi_fgs.keys(), i))
+
+        self.oi_comb_list = [list(self.oi_fgs.keys())]
+        # for i in range(1, sel`f.oi_len + 1):
+        #     self.oi_comb_list.extend(combinations(self.oi_fgs.keys(), i))
         self.oi_comb_list_len = len(self.oi_comb_list)
+
+    def _setup_oi_region_maps(self, oi_region_maps):
+        self.oi_region_maps = {}
+        for oi, mask_uri in oi_region_maps.items():
+
+            mask_img = self.fs_client.get_image_ndarray_by_key_and_shape(mask_uri, self.bg_shape, gray=True)
+            self.oi_region_maps[oi] = mask_img
 
     def _setup_bg_variations(self):
         self.bg_variations_size = max(4, math.ceil(self.class_size / self.bg_samples_len))
@@ -157,7 +171,7 @@ class Augmenter(object):
             image_ndarray = self.fs_client.get_image_ndarray_by_key_and_shape(bg_img_uri, self.bg_shape)
             augmented_examples = self.bg_sample_augmentations(bg_img_uri, image_ndarray)
             examples.extend(augmented_examples)
-            # remove this (add to reduce exampels and test)
+            # TODO: remove this (add to reduce exampels and test)
             # break
         return examples
 
@@ -178,13 +192,14 @@ class Augmenter(object):
 
     def load_fg_imgs_for_oi_comb(self, oi_comb):
         selected_oi_fg_imgs = {}
-        for oi in oi_comb:
-            samples_dict = {}
-            for oi_img_uri in self.oi_fgs[oi]:
-                samples_dict[oi_img_uri] = self.crop_oi_fig(
-                    self.fs_client.get_image_ndarray_by_key_and_shape(oi_img_uri, self.oi_shape, alpha=True)
-                )
-            selected_oi_fg_imgs[oi] = samples_dict
+        for compound_oi_list in oi_comb:
+            for oi in compound_oi_list.split('+'):
+                samples_dict = {}
+                for oi_img_uri in self.oi_fgs[oi]:
+                    samples_dict[oi_img_uri] = self.crop_oi_fig(
+                        self.fs_client.get_image_ndarray_by_key_and_shape(oi_img_uri, self.oi_shape, alpha=True)
+                    )
+                selected_oi_fg_imgs[oi] = samples_dict
         return selected_oi_fg_imgs
 
 
@@ -202,20 +217,31 @@ class Augmenter(object):
     #         selected_oi_fg_imgs[oi] = samples_dict
     #     return selected_oi_fg_imgs
 
-    def randomize_oi_fg_transform(self, fg_size, oi_image):
+    def randomize_oi_fg_transform(self, fg_size, oi, oi_image):
+
         rand_resize = random.randint(50, 150) / 100
         new_height = int(oi_image.shape[0] * rand_resize)
         new_width = int(oi_image.shape[1] * rand_resize)
 
-        x1, y1 = [random.random(), random.random()]
-        x2 = min(1.0, x1 + (new_width /fg_size[0]))
-        y2 = min(1.0, y1 + (new_height /fg_size[1]))
+        # 280, 766 x, y
+        if self.oi_region_maps is not None:
+            oi_region_map_img = self.oi_region_maps[oi]
+            # Find all white pixel positions in the mask
+            white_pixels = np.column_stack(np.where(oi_region_map_img == 255))
+            random_pixel_position = white_pixels[np.random.randint(0, len(white_pixels))]
+            y1, x1 = random_pixel_position / (fg_size[0], fg_size[1])
+        else:
+            x1, y1 = [random.random(), random.random()]
+        x2 = min(1.0, x1 + (new_width /fg_size[1]))
+        y2 = min(1.0, y1 + (new_height /fg_size[0]))
         # x2 = x1 + (new_width /fg_size[0])
         # y2 = y1 + (new_height /fg_size[1])
+        # x1, y1 =(0, 0.25)
 
         resize_interp = cv2.INTER_LINEAR
-        if rand_resize < 0:
-            resize_interp = cv2.INTER_ARE
+        # should uncoment this if I want to try other resize tipes for when reducing size
+        if rand_resize < 1:
+            resize_interp = cv2.INTER_AREA
         resized_image = cv2.resize(oi_image, (new_width, new_height), interpolation=resize_interp)
 
         # flip_rand = random.choice(['v', 'h', 'n'])
@@ -258,7 +284,7 @@ class Augmenter(object):
             # for oi_image in oi_data.values():
             for oi_img_url in oi_sample:
                 oi_image = oi_data[oi_img_url]
-                t_oi_image, bbox = self.randomize_oi_fg_transform(fg_size, oi_image)
+                t_oi_image, bbox = self.randomize_oi_fg_transform(fg_size, oi, oi_image)
                 # print(f'> {bbox}')
                 fg_image = composite_from_bbox(src=t_oi_image, dst=fg_image, bbox=bbox)
                 bbox_list.append(bbox)
@@ -313,6 +339,8 @@ class Augmenter(object):
                 bg_image = self.fs_client.get_image_ndarray_by_key_and_shape(bg_key, self.bg_shape)
                 augmented_examples = self.oi_fg_augmentations(bg_key, comb_i, bg_image, oi_images)
                 examples.extend(augmented_examples)
+                # TODO: remove break
+                # break
 
             # remove this (add to reduce exampels and test)
             # break
@@ -335,6 +363,8 @@ class Augmenter(object):
         for img_uri, annotation in self.oi_annotated_samples.items():
             image = self.fs_client.get_image_ndarray_by_key_and_shape(img_uri, self.bg_shape)
             examples.append(self.save_oi_annotated_sample(img_uri, image))
+            # TODO: remove break
+            # break
         return examples
 
     def _prepare_disk(self):

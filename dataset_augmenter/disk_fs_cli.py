@@ -18,10 +18,12 @@ class DiskImageLoader():
         if not os.path.exists(self.aug_dataset_image_path):
             os.mkdir(self.aug_dataset_image_path)
 
-    def get_image_ndarray_by_key_and_shape(self, img_uri, shape, alpha=False):
+    def get_image_ndarray_by_key_and_shape(self, img_uri, shape, alpha=False, gray=False):
         if '/' not in img_uri:
             img_uri = os.path.join(self.aug_dataset_image_path, f'{img_uri}.png')
 
+        if gray:
+            return cv2.imread(img_uri, cv2.IMREAD_GRAYSCALE)
         if alpha:
             return cv2.imread(img_uri, cv2.IMREAD_UNCHANGED)
         return cv2.imread(img_uri)

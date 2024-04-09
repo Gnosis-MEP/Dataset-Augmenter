@@ -9,6 +9,7 @@ INPUT_DIR = os.path.join(PROJECT_ROOT, 'inputs')
 INPUT_BGS_DIR = os.path.join(INPUT_DIR, 'BGs')
 INPUT_OIS_DIR = os.path.join(INPUT_DIR, 'OIs', 'origin')
 INPUT_OI_SAMPLES_DIR = os.path.join(INPUT_DIR, 'OIs', 'Samples')
+INPUT_OI_REGION_MAPS_DIR = os.path.join(INPUT_DIR, 'OIs', 'Regions')
 
 
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, 'outputs')

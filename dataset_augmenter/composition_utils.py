@@ -24,9 +24,7 @@ def rect_to_slice(rect):
     return np.s_[ry:ry+rh, rx:rx+rw]
 
 def composite(src, dst=None, position=(0,0), background_color=None):
-    # this is pronounced "com-PUH-sit" to all you non-native speakers
-
-    (src_height, src_width, src_ch) = src.shape
+    src_height, src_width, src_ch = src.shape
     src_has_alpha = (src_ch == 4)
 
     # shortcut
@@ -47,7 +45,7 @@ def composite(src, dst=None, position=(0,0), background_color=None):
         else:
             dst[:,:] = background_color
 
-    (dst_height, dst_width) = dst.shape[:2]
+    dst_height, dst_width = dst.shape[:2]
     dst_has_alpha = (dst.shape[2] == 4)
 
     src_rect = np.array([0, 0, src_width, src_height])
@@ -83,7 +81,7 @@ def composite(src, dst=None, position=(0,0), background_color=None):
 def composite_from_bbox(src, dst=None, bbox=None, background_color=None):
     position = None
     if bbox:
-        position = (int(dst.shape[1] * bbox[1]), int(dst.shape[0] * bbox[0]))
+        position = (int(dst.shape[1] * bbox[0]), int(dst.shape[0] * bbox[1]))
     return composite(src=src, dst=dst, position=position, background_color=background_color)
 
 
