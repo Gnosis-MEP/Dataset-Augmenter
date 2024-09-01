@@ -6,6 +6,8 @@ SOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SOURCE_DIR)
 
 INPUT_DIR = os.path.join(PROJECT_ROOT, 'inputs')
+INPUT_DIR = config('INPUT_DIR', default=INPUT_DIR)
+
 INPUT_BGS_DIR = os.path.join(INPUT_DIR, 'BGs')
 INPUT_OIS_DIR = os.path.join(INPUT_DIR, 'OIs', 'origin')
 INPUT_OI_SAMPLES_DIR = os.path.join(INPUT_DIR, 'OIs', 'Samples')

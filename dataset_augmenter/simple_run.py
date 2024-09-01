@@ -76,10 +76,8 @@ def get_oi_region_maps_dict(dataset_id, oi_classes):
 
 
 
-def run_augmenter():
+def run_augmenter(dataset_id, oi_classes):
 
-    dataset_id = 'TS-D-B-2-10S'
-    oi_classes = ['car']
     oi_delta = 7
 
     bg_samples = get_bg_samples_uris(dataset_id)
@@ -118,12 +116,16 @@ def run_augmenter():
     augmenter.augment()
 
 
-def main():
+def main(dataset_id, oi_classes):
     try:
-        run_augmenter()
+        print(INPUT_BGS_DIR)
+        # run_augmenter(dataset_id, oi_classes)
     except KeyboardInterrupt:
         pass
 
 
 if __name__ == '__main__':
-    main()
+    import sys
+    dataset_id = sys.argv[1]
+    oi_classes = sys.argv[2].split(',')
+    main(dataset_id, oi_classes)
