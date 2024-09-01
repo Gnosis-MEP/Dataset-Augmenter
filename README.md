@@ -58,3 +58,6 @@ Then, run the service with:
 ```
 $ python dataset_augmenter/simple_run.py HS-D-B-1-10S car
 ```
+
+# License
+Distributed under the apache 2.0 license, see License file for details.
